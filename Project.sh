@@ -576,207 +576,6 @@ modify_user() {
     done
 }
 
-# Function to delete group
-delete_group() {
-    # Get list of groups
-    groups=$(getent group | cut -d: -f1)
-    
-    # Create menu items
-    menu_items=""
-    for group in $groups; do
-        menu_items="$menu_items $group Group"
-    done
-    
-    # Show menu dialog
-    groupname=$(dialog --title "Delete Group" --menu "Select group to delete:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
-    
-    # Check if canceled
-    if [ $? -ne 0 ]; then
-        return
-    fi
-    
-    # Confirm deletion
-    dialog --title "Confirm Deletion" --yesno "Are you sure you want to delete group '$groupname'?" 8 60
-    
-    # Check if canceled
-    if [ $? -ne 0 ]; then
-        return
-    fi
-    
-    # Delete group
-    groupdel "$groupname"
-    
-    if [ $? -eq 0 ]; then
-        # Log group deletion
-        log_user_activity "DELETE_GROUP" "$groupname" "Group deleted"
-        
-        show_message "Group '$groupname' deleted successfully."
-    else
-        show_error "Failed to delete group '$groupname'."
-    fi
-}
-
-# Function to display group information
-display_group_info() {
-    # Get list of groups
-    groups=$(getent group | cut -d: -f1)
-    
-    # Create menu items
-    menu_items=""
-    for group in $groups; do
-        menu_items="$menu_items $group Group"
-    done
-    
-    # Show menu dialog
-    groupname=$(dialog --title "Group Information" --menu "Select group to display information:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
-    
-    # Check if canceled
-    if [ $? -ne 0 ]; then
-        return
-    fi
-    
-    # Get group info
-    group_info=$(getent group "$groupname")
-    gid=$(echo "$group_info" | cut -d: -f3)
-    members=$(echo "$group_info" | cut -d: -f4 | tr ',' ' ')
-    
-    # Display group info
-    dialog --title "Group Information: $groupname" --msgbox "Group Name: $groupname\nGroup ID: $gid\nMembers: $members" 10 70
-}
-
-# Function to show the user login log viewer
-view_login_logs() {
-    # Check if login log file exists
-    if [ ! -f "$LOGIN_LOG_FILE" ]; then
-        show_error "Login log file does not exist."
-        return
-    fi
-    
-    # Get list of users to filter by
-    users=$(getent passwd | grep -v "nologin\|false" | cut -d: -f1)
-    
-    # Add "All Users" option at the beginning
-    menu_items="all_users \"All Users\""
-    for user in $users; do
-        menu_items="$menu_items $user \"$user\""
-    done
-    
-    # Show menu dialog for selecting user
-    filter_user=$(dialog --title "Login Logs" --menu "Select user to view login logs:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
-    
-    # Check if canceled
-    if [ $? -ne 0 ]; then
-        return
-    fi
-    
-    # Filter logs by user or show all
-    if [ "$filter_user" = "all_users" ]; then
-        log_content=$(cat "$LOGIN_LOG_FILE")
-        title="Login Logs - All Users"
-    else
-        log_content=$(grep "User: $filter_user" "$LOGIN_LOG_FILE")
-        title="Login Logs - User: $filter_user"
-    fi
-    
-    # Check if there are any logs
-    if [ -z "$log_content" ]; then
-        show_message "No login logs found for the selected user."
-        return
-    fi
-    
-    # Show logs in a scrollable textbox
-    dialog --title "$title" --backtitle "User Login Logs" --scrollbar --exit-label "Back" \
-        --textbox <(echo "$log_content") $((HEIGHT*2)) $((WIDTH*2))
-}
-
-# Function to show account activity logs
-view_account_logs() {
-    # Check if account log file exists
-    if [ ! -f "$ACCOUNT_LOG_FILE" ]; then
-        show_error "Account log file does not exist."
-        return
-    fi
-    
-    # Options for filtering
-    option=$(dialog --title "Account Activity Logs" --menu "Select filter option:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
-        "1" "All activities" \
-        "2" "Filter by user" \
-        "3" "Filter by action" \
-        "4" "Back to logs menu" 3>&1 1>&2 2>&3)
-    
-    # Check if canceled or back selected
-    if [ $? -ne 0 ] || [ "$option" = "4" ]; then
-        return
-    fi
-    
-    case $option in
-        1)
-            # Show all logs
-            log_content=$(cat "$ACCOUNT_LOG_FILE")
-            title="Account Activity Logs - All Activities"
-            ;;
-        2)
-            # Filter by user
-            users=$(getent passwd | grep -v "nologin\|false" | cut -d: -f1)
-            
-            # Create menu items
-            menu_items=""
-            for user in $users; do
-                menu_items="$menu_items $user User"
-            done
-            
-            # Show menu dialog
-            username=$(dialog --title "Filter by User" --menu "Select user:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
-            
-            # Check if canceled
-            if [ $? -ne 0 ]; then
-                return
-            fi
-            
-            log_content=$(grep "User: $username" "$ACCOUNT_LOG_FILE")
-            title="Account Activity Logs - User: $username"
-            ;;
-        3)
-            # Filter by action
-            action=$(dialog --title "Filter by Action" --menu "Select action:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
-                "CREATE" "User creation" \
-                "DELETE" "User deletion" \
-                "MODIFY" "User modification" \
-                "PASSWORD_CHANGE" "Password changes" \
-                "GROUP_MEMBERSHIP" "Group membership changes" \
-                "RENAME" "Username changes" \
-                "CREATE_GROUP" "Group creation" \
-                "DELETE_GROUP" "Group deletion" \
-                "MODIFY_GROUP" "Group modification" \
-                "RENAME_GROUP" "Group name changes" 3>&1 1>&2 2>&3)
-            
-            # Check if canceled
-            if [ $? -ne 0 ]; then
-                return
-            fi
-            
-            log_content=$(grep "Action: $action" "$ACCOUNT_LOG_FILE")
-            title="Account Activity Logs - Action: $action"
-            ;;
-    esac
-    
-    # Check if there are any logs
-    if [ -z "$log_content" ]; then
-        show_message "No account logs found for the selected filter."
-        return
-    fi
-    
-    # Show logs in a scrollable textbox
-    dialog --title "$title" --backtitle "Account Activity Logs" --scrollbar --exit-label "Back" \
-        --textbox <(echo "$log_content") $((HEIGHT*2)) $((WIDTH*2))
-}
-
-# Function to display help
-show_help() {
-    dialog --title "Help" --msgbox "Linux User Account Management TUI\n\nThis tool provides an interactive interface for managing Linux user and group accounts. It allows you to create, modify, and delete users and groups, as well as manage passwords and group memberships.\n\nUser Management:\n- Create User: Create a new user account with customizable settings\n- Modify User: Change username, full name, home directory, shell, password, or group membership\n- Delete User: Remove a user account with option to keep or delete home directory\n- Set Password: Change a user's password\n- Add User to Groups: Modify a user's group memberships\n- Display User Info: Show detailed information about a user\n\nGroup Management:\n- Create Group: Create a new group\n- Modify Group: Change group name or modify group members\n- Delete Group: Remove a group\n- Display Group Info: Show detailed information about a group\n\nLog Management:\n- View Login Logs: View user login/logout history\n- View Account Logs: View account modification history\n\nFor more information about Linux user and group management, refer to the man pages:\n- man useradd\n- man usermod\n- man userdel\n- man passwd\n- man groupadd\n- man groupmod\n- man groupdel" 25 70
-}
-}
-
 # Function to delete user
 delete_user() {
     # Get list of users
@@ -1020,6 +819,338 @@ modify_group() {
                 else
                     show_error "Failed to update members of group '$groupname'."
                 fi
+                ;;
+        esac
+    done
+}
+
+# Function to delete group
+delete_group() {
+    # Get list of groups
+    groups=$(getent group | cut -d: -f1)
+    
+    # Create menu items
+    menu_items=""
+    for group in $groups; do
+        menu_items="$menu_items $group Group"
+    done
+    
+    # Show menu dialog
+    groupname=$(dialog --title "Delete Group" --menu "Select group to delete:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
+    
+    # Check if canceled
+    if [ $? -ne 0 ]; then
+        return
+    fi
+    
+    # Confirm deletion
+    dialog --title "Confirm Deletion" --yesno "Are you sure you want to delete group '$groupname'?" 8 60
+    
+    # Check if canceled
+    if [ $? -ne 0 ]; then
+        return
+    fi
+    
+    # Delete group
+    groupdel "$groupname"
+    
+    if [ $? -eq 0 ]; then
+        # Log group deletion
+        log_user_activity "DELETE_GROUP" "$groupname" "Group deleted"
+        
+        show_message "Group '$groupname' deleted successfully."
+    else
+        show_error "Failed to delete group '$groupname'."
+    fi
+}
+
+# Function to display group information
+display_group_info() {
+    # Get list of groups
+    groups=$(getent group | cut -d: -f1)
+    
+    # Create menu items
+    menu_items=""
+    for group in $groups; do
+        menu_items="$menu_items $group Group"
+    done
+    
+    # Show menu dialog
+    groupname=$(dialog --title "Group Information" --menu "Select group to display information:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
+    
+    # Check if canceled
+    if [ $? -ne 0 ]; then
+        return
+    fi
+    
+    # Get group info
+    group_info=$(getent group "$groupname")
+    gid=$(echo "$group_info" | cut -d: -f3)
+    members=$(echo "$group_info" | cut -d: -f4 | tr ',' ' ')
+    
+    # Display group info
+    dialog --title "Group Information: $groupname" --msgbox "Group Name: $groupname\nGroup ID: $gid\nMembers: $members" 10 70
+}
+
+# Function to show the user login log viewer
+view_login_logs() {
+    # Check if login log file exists
+    if [ ! -f "$LOGIN_LOG_FILE" ]; then
+        show_error "Login log file does not exist."
+        return
+    fi
+    
+    # Get list of users to filter by
+    users=$(getent passwd | grep -v "nologin\|false" | cut -d: -f1)
+    
+    # Add "All Users" option at the beginning
+    menu_items="all_users \"All Users\""
+    for user in $users; do
+        menu_items="$menu_items $user \"$user\""
+    done
+    
+    # Show menu dialog for selecting user
+    filter_user=$(dialog --title "Login Logs" --menu "Select user to view login logs:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
+    
+    # Check if canceled
+    if [ $? -ne 0 ]; then
+        return
+    fi
+    
+    # Filter logs by user or show all
+    if [ "$filter_user" = "all_users" ]; then
+        log_content=$(cat "$LOGIN_LOG_FILE")
+        title="Login Logs - All Users"
+    else
+        log_content=$(grep "User: $filter_user" "$LOGIN_LOG_FILE")
+        title="Login Logs - User: $filter_user"
+    fi
+    
+    # Check if there are any logs
+    if [ -z "$log_content" ]; then
+        show_message "No login logs found for the selected user."
+        return
+    fi
+    
+    # Show logs in a scrollable textbox
+    dialog --title "$title" --backtitle "User Login Logs" --scrollbar --exit-label "Back" \
+        --textbox <(echo "$log_content") $((HEIGHT*2)) $((WIDTH*2))
+}
+
+# Function to show account activity logs
+view_account_logs() {
+    # Check if account log file exists
+    if [ ! -f "$ACCOUNT_LOG_FILE" ]; then
+        show_error "Account log file does not exist."
+        return
+    fi
+    
+    # Options for filtering
+    option=$(dialog --title "Account Activity Logs" --menu "Select filter option:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
+        "1" "All activities" \
+        "2" "Filter by user" \
+        "3" "Filter by action" \
+        "4" "Back to logs menu" 3>&1 1>&2 2>&3)
+    
+    # Check if canceled or back selected
+    if [ $? -ne 0 ] || [ "$option" = "4" ]; then
+        return
+    fi
+    
+    case $option in
+        1)
+            # Show all logs
+            log_content=$(cat "$ACCOUNT_LOG_FILE")
+            title="Account Activity Logs - All Activities"
+            ;;
+        2)
+            # Filter by user
+            users=$(getent passwd | grep -v "nologin\|false" | cut -d: -f1)
+            
+            # Create menu items
+            menu_items=""
+            for user in $users; do
+                menu_items="$menu_items $user User"
+            done
+            
+            # Show menu dialog
+            username=$(dialog --title "Filter by User" --menu "Select user:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
+            
+            # Check if canceled
+            if [ $? -ne 0 ]; then
+                return
+            fi
+            
+            log_content=$(grep "User: $username" "$ACCOUNT_LOG_FILE")
+            title="Account Activity Logs - User: $username"
+            ;;
+        3)
+            # Filter by action
+            action=$(dialog --title "Filter by Action" --menu "Select action:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
+                "CREATE" "User creation" \
+                "DELETE" "User deletion" \
+                "MODIFY" "User modification" \
+                "PASSWORD_CHANGE" "Password changes" \
+                "GROUP_MEMBERSHIP" "Group membership changes" \
+                "RENAME" "Username changes" \
+                "CREATE_GROUP" "Group creation" \
+                "DELETE_GROUP" "Group deletion" \
+                "MODIFY_GROUP" "Group modification" \
+                "RENAME_GROUP" "Group name changes" 3>&1 1>&2 2>&3)
+            
+            # Check if canceled
+            if [ $? -ne 0 ]; then
+                return
+            fi
+            
+            log_content=$(grep "Action: $action" "$ACCOUNT_LOG_FILE")
+            title="Account Activity Logs - Action: $action"
+            ;;
+    esac
+    
+    # Check if there are any logs
+    if [ -z "$log_content" ]; then
+        show_message "No account logs found for the selected filter."
+        return
+    fi
+    
+    # Show logs in a scrollable textbox
+    dialog --title "$title" --backtitle "Account Activity Logs" --scrollbar --exit-label "Back" \
+        --textbox <(echo "$log_content") $((HEIGHT*2)) $((WIDTH*2))
+}
+
+# Main function
+main() {
+    while true; do
+        # Show main menu
+        main_option=$(dialog --title "Linux User Account Management" --menu "Select an option:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
+            "1" "User Management" \
+            "2" "Group Management" \
+            "3" "Log Management" \
+            "4" "Help" \
+            "5" "Exit" 3>&1 1>&2 2>&3)
+        
+        # Check if canceled or exit selected
+        if [ $? -ne 0 ] || [ "$main_option" = "5" ]; then
+            clear
+            echo "Exiting..."
+            exit 0
+        fi
+        
+        case $main_option in
+            1)
+                # User Management submenu
+                while true; do
+                    user_option=$(dialog --title "User Management" --menu "Select an option:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
+                        "1" "Create User" \
+                        "2" "Modify User" \
+                        "3" "Delete User" \
+                        "4" "Set Password" \
+                        "5" "Add User to Groups" \
+                        "6" "Display User Info" \
+                        "7" "Back to Main Menu" 3>&1 1>&2 2>&3)
+                    
+                    # Check if canceled or back selected
+                    if [ $? -ne 0 ] || [ "$user_option" = "7" ]; then
+                        break
+                    fi
+                    
+                    case $user_option in
+                        1) create_user ;;
+                        2) modify_user ;;
+                        3) delete_user ;;
+                        4)
+                            # Get list of users
+                            users=$(getent passwd | grep -v "nologin\|false" | cut -d: -f1)
+                            
+                            # Create menu items
+                            menu_items=""
+                            for user in $users; do
+                                menu_items="$menu_items $user User"
+                            done
+                            
+                            # Show menu dialog
+                            username=$(dialog --title "Set Password" --menu "Select user to set password:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
+                            
+                            # Check if canceled
+                            if [ $? -ne 0 ]; then
+                                continue
+                            fi
+                            
+                            set_password "$username"
+                            ;;
+                        5)
+                            # Get list of users
+                            users=$(getent passwd | grep -v "nologin\|false" | cut -d: -f1)
+                            
+                            # Create menu items
+                            menu_items=""
+                            for user in $users; do
+                                menu_items="$menu_items $user User"
+                            done
+                            
+                            # Show menu dialog
+                            username=$(dialog --title "Add User to Groups" --menu "Select user to modify groups:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
+                            
+                            # Check if canceled
+                            if [ $? -ne 0 ]; then
+                                continue
+                            fi
+                            
+                            add_user_to_groups "$username"
+                            ;;
+                        6) display_user_info ;;
+                    esac
+                done
+                ;;
+            
+            2)
+                # Group Management submenu
+                while true; do
+                    group_option=$(dialog --title "Group Management" --menu "Select an option:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
+                        "1" "Create Group" \
+                        "2" "Modify Group" \
+                        "3" "Delete Group" \
+                        "4" "Display Group Info" \
+                        "5" "Back to Main Menu" 3>&1 1>&2 2>&3)
+                    
+                    # Check if canceled or back selected
+                    if [ $? -ne 0 ] || [ "$group_option" = "5" ]; then
+                        break
+                    fi
+                    
+                    case $group_option in
+                        1) create_group ;;
+                        2) modify_group ;;
+                        3) delete_group ;;
+                        4) display_group_info ;;
+                    esac
+                done
+                ;;
+                
+            3)
+                # Log Management submenu
+                while true; do
+                    log_option=$(dialog --title "Log Management" --menu "Select an option:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
+                        "1" "View User Login Logs" \
+                        "2" "View Account Activity Logs" \
+                        "3" "Back to Main Menu" 3>&1 1>&2 2>&3)
+                    
+                    # Check if canceled or back selected
+                    if [ $? -ne 0 ] || [ "$log_option" = "3" ]; then
+                        break
+                    fi
+                    
+                    case $log_option in
+                        1) view_login_logs ;;
+                        2) view_account_logs ;;
+                    esac
+                done
+                ;;
+            
+            4)
+                # Help
+                show_help
                 ;;
         esac
     done
