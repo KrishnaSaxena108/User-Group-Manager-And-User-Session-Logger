@@ -2,7 +2,7 @@
 
 A comprehensive Terminal User Interface (TUI) tool for managing Linux user accounts, groups, and monitoring session activities.
 
-![Linux User Management TUI](https://via.placeholder.com/800x450.png?text=Linux+User+Management+TUI)
+![image](https://github.com/user-attachments/assets/6875b1f5-f52f-44ae-99a7-7be602061e80)
 
 ## Features
 
@@ -96,6 +96,10 @@ All user and group management actions are logged to `/var/log/user_management.lo
 - Actor who performed the action
 
 ## Screenshots
+
+![image](https://github.com/user-attachments/assets/da543252-eae7-4d74-a7b7-a5ebeb4a7d2f)
+
+![image](https://github.com/user-attachments/assets/781d2019-1a8a-4fc4-a267-2d8d7235b583)
 
 ## Project Structure
 
