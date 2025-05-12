@@ -5,7 +5,7 @@
 # A Terminal User Interface (TUI) tool for managing Linux user and group accounts.
 # This script provides an interactive interface for creating, modifying, and deleting
 # users and groups, as well as managing passwords and group memberships.
-# Now includes user login/logout logging functionality.
+# Includes comprehensive session logging and monitoring capabilities.
 #
 # Dependencies: dialog, standard Linux user management commands
 #
@@ -32,39 +32,6 @@ DIALOG_ESC=255
 HEIGHT=20
 WIDTH=70
 CHOICE_HEIGHT=10
-
-# Define log file location
-LOG_DIR="/var/log/user_activity"
-LOGIN_LOG_FILE="$LOG_DIR/user_login.log"
-ACCOUNT_LOG_FILE="$LOG_DIR/account_changes.log"
-
-# Create log directory if it doesn't exist
-if [ ! -d "$LOG_DIR" ]; then
-    mkdir -p "$LOG_DIR"
-    chmod 750 "$LOG_DIR"
-fi
-
-# Create log files if they don't exist
-if [ ! -f "$LOGIN_LOG_FILE" ]; then
-    touch "$LOGIN_LOG_FILE"
-    chmod 640 "$LOGIN_LOG_FILE"
-fi
-
-if [ ! -f "$ACCOUNT_LOG_FILE" ]; then
-    touch "$ACCOUNT_LOG_FILE"
-    chmod 640 "$ACCOUNT_LOG_FILE"
-fi
-
-# Function to log user activity
-log_user_activity() {
-    local action="$1"
-    local username="$2"
-    local details="$3"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local admin_user=$(whoami)
-    
-    echo "[$timestamp] Admin: $admin_user, Action: $action, User: $username, Details: $details" >> "$ACCOUNT_LOG_FILE"
-}
 
 # Function to display a message box
 show_message() {
@@ -214,96 +181,18 @@ create_user() {
     eval $cmd
     
     if [ $? -eq 0 ]; then
-        # Log user creation
-        log_user_activity "CREATE" "$username" "Shell: $shell, Home: $homedir"
-        
         # Set password
         set_password "$username"
         
         # Add to supplementary groups
         add_user_to_groups "$username"
         
-        # Setup login logging for this user by adding to PAM configuration
-        setup_login_logging "$username"
+        # Log user creation
+        log_user_action "$username" "created"
         
         show_message "User '$username' created successfully."
     else
         show_error "Failed to create user '$username'."
-    fi
-}
-
-# Function to setup login logging for a user
-setup_login_logging() {
-    local username="$1"
-    local pam_login_file="/etc/pam.d/login"
-    local pam_sshd_file="/etc/pam.d/sshd"
-    
-    # Check if the login hook is already installed
-    if ! grep -q "pam_exec.so /etc/security/log_login.sh" "$pam_login_file" 2>/dev/null; then
-        # Create the login logging script if it doesn't exist
-        if [ ! -f "/etc/security/log_login.sh" ]; then
-            mkdir -p /etc/security
-            cat > /etc/security/log_login.sh << 'EOF'
-#!/bin/bash
-# Log user logins and logouts
-LOG_FILE="/var/log/user_activity/user_login.log"
-USER=$PAM_USER
-RHOST=$PAM_RHOST
-TTY=$PAM_TTY
-SERVICE=$PAM_SERVICE
-TYPE=$PAM_TYPE
-DATE=$(date '+%Y-%m-%d %H:%M:%S')
-
-# Ensure log directory exists
-if [ ! -d "$(dirname "$LOG_FILE")" ]; then
-    mkdir -p "$(dirname "$LOG_FILE")"
-    chmod 750 "$(dirname "$LOG_FILE")"
-fi
-
-# Create log file if it doesn't exist
-if [ ! -f "$LOG_FILE" ]; then
-    touch "$LOG_FILE"
-    chmod 640 "$LOG_FILE"
-fi
-
-# Log the event
-if [ "$TYPE" = "open_session" ]; then
-    echo "[$DATE] LOGIN: User: $USER, Remote: $RHOST, TTY: $TTY, Service: $SERVICE" >> "$LOG_FILE"
-elif [ "$TYPE" = "close_session" ]; then
-    echo "[$DATE] LOGOUT: User: $USER, Remote: $RHOST, TTY: $TTY, Service: $SERVICE" >> "$LOG_FILE"
-fi
-EOF
-            chmod +x /etc/security/log_login.sh
-        fi
-        
-        # Add to PAM configuration
-        echo "session optional pam_exec.so /etc/security/log_login.sh" >> "$pam_login_file"
-        
-        # Also add to sshd PAM if it exists
-        if [ -f "$pam_sshd_file" ]; then
-            echo "session optional pam_exec.so /etc/security/log_login.sh" >> "$pam_sshd_file"
-        fi
-    fi
-    
-    # Hook into /etc/profile to catch all login sessions
-    if ! grep -q "log_login.sh" /etc/profile 2>/dev/null; then
-        echo '# Log user login' >> /etc/profile
-        echo 'if [ -x /etc/security/log_login.sh ]; then' >> /etc/profile
-        echo '    PAM_TYPE=open_session PAM_USER=$USER PAM_TTY=$(tty) PAM_SERVICE=login /etc/security/log_login.sh' >> /etc/profile
-        echo 'fi' >> /etc/profile
-        
-        # Add logout trap to /etc/bash.bash_logout
-        if [ ! -f /etc/bash.bash_logout ]; then
-            echo '# Log user logout' > /etc/bash.bash_logout
-            echo 'if [ -x /etc/security/log_login.sh ]; then' >> /etc/bash.bash_logout
-            echo '    PAM_TYPE=close_session PAM_USER=$USER PAM_TTY=$(tty) PAM_SERVICE=login /etc/security/log_login.sh' >> /etc/bash.bash_logout
-            echo 'fi' >> /etc/bash.bash_logout
-        elif ! grep -q "log_login.sh" /etc/bash.bash_logout; then
-            echo '# Log user logout' >> /etc/bash.bash_logout
-            echo 'if [ -x /etc/security/log_login.sh ]; then' >> /etc/bash.bash_logout
-            echo '    PAM_TYPE=close_session PAM_USER=$USER PAM_TTY=$(tty) PAM_SERVICE=login /etc/security/log_login.sh' >> /etc/bash.bash_logout
-            echo 'fi' >> /etc/bash.bash_logout
-        fi
     fi
 }
 
@@ -326,7 +215,7 @@ set_password() {
     passwd "$username"
     
     # Log password change
-    log_user_activity "PASSWORD_CHANGE" "$username" "Password modified"
+    log_user_action "$username" "password changed"
     
     # Wait for user to press a key before returning to the TUI
     read -p "Press Enter to continue..."
@@ -372,8 +261,8 @@ add_user_to_groups() {
         usermod -G $(echo $selected_groups | tr -d '"') "$username"
         
         if [ $? -eq 0 ]; then
-            # Log group modification
-            log_user_activity "GROUP_MEMBERSHIP" "$username" "Added to groups: $selected_groups"
+            # Log group membership change
+            log_user_action "$username" "group membership changed to: $selected_groups"
             show_message "User '$username' added to groups: $selected_groups"
         else
             show_error "Failed to add user '$username' to groups."
@@ -381,8 +270,8 @@ add_user_to_groups() {
     else
         # Remove user from all supplementary groups
         usermod -G "" "$username"
-        # Log group modification
-        log_user_activity "GROUP_MEMBERSHIP" "$username" "Removed from all supplementary groups"
+        # Log group membership removal
+        log_user_action "$username" "removed from all supplementary groups"
         show_message "User '$username' removed from all supplementary groups."
     fi
 }
@@ -471,7 +360,7 @@ modify_user() {
                     fi
                     
                     # Log username change
-                    log_user_activity "RENAME" "$username" "New username: $new_username"
+                    log_user_action "$username" "username changed to $new_username"
                     
                     show_message "Username changed from '$username' to '$new_username'."
                     username="$new_username"
@@ -493,8 +382,8 @@ modify_user() {
                 usermod -c "$new_fullname" "$username"
                 
                 if [ $? -eq 0 ]; then
-                    # Log fullname change
-                    log_user_activity "MODIFY" "$username" "Full name changed from '$current_fullname' to '$new_fullname'"
+                    # Log full name change
+                    log_user_action "$username" "full name changed to '$new_fullname'"
                     
                     show_message "Full name changed for user '$username'."
                     current_fullname="$new_fullname"
@@ -525,7 +414,7 @@ modify_user() {
                 
                 if [ $? -eq 0 ]; then
                     # Log home directory change
-                    log_user_activity "MODIFY" "$username" "Home changed from '$current_home' to '$new_home', files moved: $([ $move_files -eq 0 ] && echo 'yes' || echo 'no')"
+                    log_user_action "$username" "home directory changed from '$current_home' to '$new_home'"
                     
                     show_message "Home directory changed for user '$username'."
                     current_home="$new_home"
@@ -554,7 +443,7 @@ modify_user() {
                 
                 if [ $? -eq 0 ]; then
                     # Log shell change
-                    log_user_activity "MODIFY" "$username" "Shell changed from '$current_shell' to '$new_shell'"
+                    log_user_action "$username" "shell changed from '$current_shell' to '$new_shell'"
                     
                     show_message "Shell changed for user '$username'."
                     current_shell="$new_shell"
@@ -616,7 +505,7 @@ delete_user() {
     
     if [ $? -eq 0 ]; then
         # Log user deletion
-        log_user_activity "DELETE" "$username" "Home directory removed: $([ $remove_home -eq 0 ] && echo 'yes' || echo 'no')"
+        log_user_action "$username" "deleted" "system"
         
         show_message "User '$username' deleted successfully."
     else
@@ -706,7 +595,7 @@ create_group() {
     
     if [ $? -eq 0 ]; then
         # Log group creation
-        log_user_activity "CREATE_GROUP" "$groupname" "GID: $(getent group "$groupname" | cut -d: -f3)"
+        log_group_action "$groupname" "created"
         
         show_message "Group '$groupname' created successfully."
     else
@@ -771,8 +660,8 @@ modify_group() {
                 groupmod -n "$new_groupname" "$groupname"
                 
                 if [ $? -eq 0 ]; then
-                    # Log group rename
-                    log_user_activity "RENAME_GROUP" "$groupname" "New name: $new_groupname"
+                    # Log group name change
+                    log_group_action "$groupname" "renamed to '$new_groupname'"
                     
                     show_message "Group name changed from '$groupname' to '$new_groupname'."
                     groupname="$new_groupname"
@@ -813,7 +702,7 @@ modify_group() {
                 
                 if [ $? -eq 0 ]; then
                     # Log group membership change
-                    log_user_activity "MODIFY_GROUP" "$groupname" "Members updated to: $(echo $selected_users | tr -d '\"')"
+                    log_group_action "$groupname" "membership updated to: $selected_users"
                     
                     show_message "Members of group '$groupname' updated successfully."
                 else
@@ -856,7 +745,7 @@ delete_group() {
     
     if [ $? -eq 0 ]; then
         # Log group deletion
-        log_user_activity "DELETE_GROUP" "$groupname" "Group deleted"
+        log_group_action "$groupname" "deleted"
         
         show_message "Group '$groupname' deleted successfully."
     else
@@ -892,131 +781,236 @@ display_group_info() {
     dialog --title "Group Information: $groupname" --msgbox "Group Name: $groupname\nGroup ID: $gid\nMembers: $members" 10 70
 }
 
-# Function to show the user login log viewer
-view_login_logs() {
-    # Check if login log file exists
-    if [ ! -f "$LOGIN_LOG_FILE" ]; then
-        show_error "Login log file does not exist."
-        return
+# Function to log user actions
+log_user_action() {
+    local username="$1"
+    local action="$2"
+    local actor="${3:-$(whoami)}"
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    local log_file="/var/log/user_management.log"
+    
+    # Create log file if it doesn't exist
+    if [ ! -f "$log_file" ]; then
+        touch "$log_file"
+        chmod 640 "$log_file"
     fi
     
-    # Get list of users to filter by
+    # Log the action
+    echo "[$timestamp] User '$username' $action by '$actor'" >> "$log_file"
+}
+
+# Function to log group actions
+log_group_action() {
+    local groupname="$1"
+    local action="$2"
+    local actor="${3:-$(whoami)}"
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    local log_file="/var/log/user_management.log"
+    
+    # Create log file if it doesn't exist
+    if [ ! -f "$log_file" ]; then
+        touch "$log_file"
+        chmod 640 "$log_file"
+    fi
+    
+    # Log the action
+    echo "[$timestamp] Group '$groupname' $action by '$actor'" >> "$log_file"
+}
+
+# Function to display user session logs
+display_user_session_logs() {
+    # Get list of users
     users=$(getent passwd | grep -v "nologin\|false" | cut -d: -f1)
     
-    # Add "All Users" option at the beginning
-    menu_items="all_users \"All Users\""
+    # Create menu items
+    menu_items=""
     for user in $users; do
-        menu_items="$menu_items $user \"$user\""
+        menu_items="$menu_items $user User"
     done
     
-    # Show menu dialog for selecting user
-    filter_user=$(dialog --title "Login Logs" --menu "Select user to view login logs:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
+    # Add "All Users" option
+    menu_items="all \"All Users\" $menu_items"
+    
+    # Show menu dialog
+    username=$(dialog --title "User Session Logs" --menu "Select user to view session logs:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
     
     # Check if canceled
     if [ $? -ne 0 ]; then
         return
     fi
     
-    # Filter logs by user or show all
-    if [ "$filter_user" = "all_users" ]; then
-        log_content=$(cat "$LOGIN_LOG_FILE")
-        title="Login Logs - All Users"
-    else
-        log_content=$(grep "User: $filter_user" "$LOGIN_LOG_FILE")
-        title="Login Logs - User: $filter_user"
-    fi
-    
-    # Check if there are any logs
-    if [ -z "$log_content" ]; then
-        show_message "No login logs found for the selected user."
-        return
-    fi
-    
-    # Show logs in a scrollable textbox
-    dialog --title "$title" --backtitle "User Login Logs" --scrollbar --exit-label "Back" \
-        --textbox <(echo "$log_content") $((HEIGHT*2)) $((WIDTH*2))
+    # Show session log options
+    while true; do
+        option=$(dialog --title "Session Logs: ${username}" --menu "Select option:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
+            "1" "Login History" \
+            "2" "Failed Login Attempts" \
+            "3" "Current Active Sessions" \
+            "4" "Last Login Information" \
+            "5" "Session Duration Statistics" \
+            "6" "Back to User Management" 3>&1 1>&2 2>&3)
+        
+        # Check if canceled
+        if [ $? -ne 0 ] || [ "$option" = "6" ]; then
+            break
+        fi
+        
+        case $option in
+            1)
+                # Login History
+                if [ "$username" = "all" ]; then
+                    # Get login history for all users
+                    login_history=$(last -a | head -n 20)
+                else
+                    # Get login history for specific user
+                    login_history=$(last -a "$username" | head -n 20)
+                fi
+                
+                # Display login history
+                dialog --title "Login History: ${username}" --msgbox "$login_history" 20 80
+                ;;
+            
+            2)
+                # Failed Login Attempts
+                if [ "$username" = "all" ]; then
+                    # Get failed login attempts for all users
+                    failed_logins=$(lastb -a | head -n 20 2>/dev/null || echo "No failed login attempts found or access denied.")
+                else
+                    # Get failed login attempts for specific user
+                    failed_logins=$(lastb -a "$username" | head -n 20 2>/dev/null || echo "No failed login attempts found or access denied.")
+                fi
+                
+                # Display failed login attempts
+                dialog --title "Failed Login Attempts: ${username}" --msgbox "$failed_logins" 20 80
+                ;;
+            
+            3)
+                # Current Active Sessions
+                if [ "$username" = "all" ]; then
+                    # Get current active sessions for all users
+                    active_sessions=$(who -a)
+                else
+                    # Get current active sessions for specific user
+                    active_sessions=$(who -a | grep "^$username ")
+                    
+                    # Check if user has active sessions
+                    if [ -z "$active_sessions" ]; then
+                        active_sessions="No active sessions for user '$username'."
+                    fi
+                fi
+                
+                # Display current active sessions
+                dialog --title "Current Active Sessions: ${username}" --msgbox "$active_sessions" 20 80
+                ;;
+            
+            4)
+                # Last Login Information
+                if [ "$username" = "all" ]; then
+                    # Get last login information for all users
+                    last_login=$(lastlog)
+                else
+                    # Get last login information for specific user
+                    last_login=$(lastlog -u "$username")
+                fi
+                
+                # Display last login information
+                dialog --title "Last Login Information: ${username}" --msgbox "$last_login" 20 80
+                ;;
+            
+            5)
+                # Session Duration Statistics
+                if [ "$username" = "all" ]; then
+                    # Get session duration statistics for all users
+                    session_stats=$(ac -p)
+                else
+                    # Get session duration statistics for specific user
+                    session_stats=$(ac -d "$username" 2>/dev/null || echo "No session statistics available for user '$username'.")
+                fi
+                
+                # Display session duration statistics
+                dialog --title "Session Duration Statistics: ${username}" --msgbox "$session_stats" 20 80
+                ;;
+        esac
+    done
 }
 
-# Function to show account activity logs
-view_account_logs() {
-    # Check if account log file exists
-    if [ ! -f "$ACCOUNT_LOG_FILE" ]; then
-        show_error "Account log file does not exist."
+# Function to display user activity summary
+display_user_activity_summary() {
+    # Get list of users
+    users=$(getent passwd | grep -v "nologin\|false" | cut -d: -f1)
+    
+    # Create menu items
+    menu_items=""
+    for user in $users; do
+        menu_items="$menu_items $user User"
+    done
+    
+    # Show menu dialog
+    username=$(dialog --title "User Activity Summary" --menu "Select user to view activity summary:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
+    
+    # Check if canceled
+    if [ $? -ne 0 ]; then
         return
     fi
     
-    # Options for filtering
-    option=$(dialog --title "Account Activity Logs" --menu "Select filter option:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
-        "1" "All activities" \
-        "2" "Filter by user" \
-        "3" "Filter by action" \
-        "4" "Back to logs menu" 3>&1 1>&2 2>&3)
+    # Get user activity summary
     
-    # Check if canceled or back selected
-    if [ $? -ne 0 ] || [ "$option" = "4" ]; then
-        return
+    # Last login time
+    last_login=$(lastlog -u "$username" | tail -n 1)
+    
+    # Login count (last 30 days)
+    login_count=$(last "$username" | grep -v "still logged in" | grep -v "^wtmp begins" | wc -l)
+    
+    # Failed login attempts (if accessible)
+    failed_attempts=$(lastb "$username" 2>/dev/null | grep -v "^btmp begins" | wc -l || echo "N/A")
+    
+    # Total session time (if available)
+    total_time=$(ac "$username" 2>/dev/null || echo "N/A")
+    
+    # Current status (logged in or not)
+    if who | grep -q "^$username "; then
+        current_status="Currently logged in"
+    else
+        current_status="Not currently logged in"
     fi
     
-    case $option in
-        1)
-            # Show all logs
-            log_content=$(cat "$ACCOUNT_LOG_FILE")
-            title="Account Activity Logs - All Activities"
-            ;;
-        2)
-            # Filter by user
-            users=$(getent passwd | grep -v "nologin\|false" | cut -d: -f1)
-            
-            # Create menu items
-            menu_items=""
-            for user in $users; do
-                menu_items="$menu_items $user User"
-            done
-            
-            # Show menu dialog
-            username=$(dialog --title "Filter by User" --menu "Select user:" $HEIGHT $WIDTH $CHOICE_HEIGHT $menu_items 3>&1 1>&2 2>&3)
-            
-            # Check if canceled
-            if [ $? -ne 0 ]; then
-                return
-            fi
-            
-            log_content=$(grep "User: $username" "$ACCOUNT_LOG_FILE")
-            title="Account Activity Logs - User: $username"
-            ;;
-        3)
-            # Filter by action
-            action=$(dialog --title "Filter by Action" --menu "Select action:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
-                "CREATE" "User creation" \
-                "DELETE" "User deletion" \
-                "MODIFY" "User modification" \
-                "PASSWORD_CHANGE" "Password changes" \
-                "GROUP_MEMBERSHIP" "Group membership changes" \
-                "RENAME" "Username changes" \
-                "CREATE_GROUP" "Group creation" \
-                "DELETE_GROUP" "Group deletion" \
-                "MODIFY_GROUP" "Group modification" \
-                "RENAME_GROUP" "Group name changes" 3>&1 1>&2 2>&3)
-            
-            # Check if canceled
-            if [ $? -ne 0 ]; then
-                return
-            fi
-            
-            log_content=$(grep "Action: $action" "$ACCOUNT_LOG_FILE")
-            title="Account Activity Logs - Action: $action"
-            ;;
-    esac
-    
-    # Check if there are any logs
-    if [ -z "$log_content" ]; then
-        show_message "No account logs found for the selected filter."
-        return
+    # Get user management log entries
+    if [ -f "/var/log/user_management.log" ]; then
+        user_log=$(grep "User '$username'" /var/log/user_management.log | tail -n 10)
+    else
+        user_log="No user management logs available."
     fi
     
-    # Show logs in a scrollable textbox
-    dialog --title "$title" --backtitle "Account Activity Logs" --scrollbar --exit-label "Back" \
-        --textbox <(echo "$log_content") $((HEIGHT*2)) $((WIDTH*2))
+    # Display user activity summary
+    dialog --title "User Activity Summary: $username" --msgbox "User: $username\n\nLast Login: $last_login\n\nLogin Count (recent): $login_count\n\nFailed Login Attempts: $failed_attempts\n\nTotal Session Time: $total_time\n\nCurrent Status: $current_status\n\nRecent Account Changes:\n$user_log" 20 80
+}
+
+# Function to display system-wide session statistics
+display_system_session_statistics() {
+    # Get system-wide statistics
+    
+    # Current logged in users
+    current_users=$(who | wc -l)
+    
+    # Total login count today
+    today=$(date "+%b %d")
+    logins_today=$(last | grep "$today" | wc -l)
+    
+    # Most active user
+    most_active=$(ac -p | sort -nrk 2 | head -n 1)
+    
+    # Failed login attempts today
+    failed_today=$(lastb | grep "$today" 2>/dev/null | wc -l || echo "N/A")
+    
+    # System uptime
+    uptime_info=$(uptime)
+    
+    # Display system-wide session statistics
+    dialog --title "System-wide Session Statistics" --msgbox "Current Logged In Users: $current_users\n\nTotal Logins Today: $logins_today\n\nMost Active User: $most_active\n\nFailed Login Attempts Today: $failed_today\n\nSystem Uptime: $uptime_info" 15 70
+}
+
+# Function to display help
+show_help() {
+    dialog --title "Help" --msgbox "Linux User Account Management TUI\n\nThis tool provides an interactive interface for managing Linux user and group accounts. It allows you to create, modify, and delete users and groups, as well as manage passwords and group memberships.\n\nUser Management:\n- Create User: Create a new user account with customizable settings\n- Modify User: Change username, full name, home directory, shell, password, or group membership\n- Delete User: Remove a user account with option to keep or delete home directory\n- Set Password: Change a user's password\n- Add User to Groups: Modify a user's group memberships\n- Display User Info: Show detailed information about a user\n\nGroup Management:\n- Create Group: Create a new group\n- Modify Group: Change group name or modify group members\n- Delete Group: Remove a group\n- Display Group Info: Show detailed information about a group\n\nSession Logging:\n- User Session Logs: View login history, failed attempts, and active sessions\n- User Activity Summary: View comprehensive user activity statistics\n- System-wide Session Statistics: View system-wide login and session information\n\nFor more information about Linux user and group management, refer to the man pages:\n- man useradd\n- man usermod\n- man userdel\n- man passwd\n- man groupadd\n- man groupmod\n- man groupdel\n- man last\n- man lastb\n- man who\n- man w\n- man ac" 25 75
 }
 
 # Main function
@@ -1026,7 +1020,7 @@ main() {
         main_option=$(dialog --title "Linux User Account Management" --menu "Select an option:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
             "1" "User Management" \
             "2" "Group Management" \
-            "3" "Log Management" \
+            "3" "Session Logging" \
             "4" "Help" \
             "5" "Exit" 3>&1 1>&2 2>&3)
         
@@ -1127,23 +1121,25 @@ main() {
                     esac
                 done
                 ;;
-                
+            
             3)
-                # Log Management submenu
+                # Session Logging submenu
                 while true; do
-                    log_option=$(dialog --title "Log Management" --menu "Select an option:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
-                        "1" "View User Login Logs" \
-                        "2" "View Account Activity Logs" \
-                        "3" "Back to Main Menu" 3>&1 1>&2 2>&3)
+                    session_option=$(dialog --title "Session Logging" --menu "Select an option:" $HEIGHT $WIDTH $CHOICE_HEIGHT \
+                        "1" "User Session Logs" \
+                        "2" "User Activity Summary" \
+                        "3" "System-wide Session Statistics" \
+                        "4" "Back to Main Menu" 3>&1 1>&2 2>&3)
                     
                     # Check if canceled or back selected
-                    if [ $? -ne 0 ] || [ "$log_option" = "3" ]; then
+                    if [ $? -ne 0 ] || [ "$session_option" = "4" ]; then
                         break
                     fi
                     
-                    case $log_option in
-                        1) view_login_logs ;;
-                        2) view_account_logs ;;
+                    case $session_option in
+                        1) display_user_session_logs ;;
+                        2) display_user_activity_summary ;;
+                        3) display_system_session_statistics ;;
                     esac
                 done
                 ;;
