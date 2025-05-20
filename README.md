@@ -51,7 +51,7 @@ A comprehensive Terminal User Interface (TUI) tool for managing Linux user accou
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/User-Group-Manager-And-User-Session-Logger.git/
+   git clone https://github.com/KrishnaSaxena108/User-Group-Manager-And-User-Session-Logger.git
    cd User-Group-Manager-And-User-Session-Logger
    ```
 
